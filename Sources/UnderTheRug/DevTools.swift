@@ -74,7 +74,6 @@ enum DevTools {
         let size = SIMD2<Float>(1000, 700)
         let scale = 2
         renderer.rugTexture = TextureFactory.rugTexture(device: device, queue: renderer.queue, style: RugStyle.named(styleID))
-        renderer.floorTexture = TextureFactory.floorTexture(device: device, queue: renderer.queue)
 
         let sim = ClothSimulation(width: 570, height: 380, center: size / 2, angle: -0.06, dropHeight: 0)
         let things: [(String, SIMD2<Float>)] = [
@@ -134,7 +133,7 @@ enum DevTools {
                 TextureFactory.iconImage(path: t.0, name: (t.0 as NSString).lastPathComponent)
             }
         }
-        let scene = RugScene(sim: sim, icons: icons, floorCorners: sim.floorCorners(fringe: Float(RugPattern.fringeFraction)), viewSize: size)
+        let scene = RugScene(sim: sim, icons: icons, viewSize: size)
 
         let w = Int(size.x) * scale, h = Int(size.y) * scale
         let colorDesc = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: RugRenderer.colorFormat, width: w, height: h, mipmapped: false)

@@ -27,7 +27,7 @@ struct QuadVertex {
     var x: Float, y: Float, u: Float, v: Float
 }
 
-/// A file icon lying on the floor under the rug.
+/// A hidden file's icon, lying on the desktop under the rug.
 struct IconPlacement {
     let id: UUID
     let center: SIMD2<Float>
@@ -37,7 +37,6 @@ struct IconPlacement {
 struct RugScene {
     let sim: ClothSimulation
     let icons: [IconPlacement]
-    let floorCorners: [SIMD2<Float>]
     let viewSize: SIMD2<Float>
 }
 
@@ -45,7 +44,7 @@ enum RendererError: Error {
     case setup(String)
 }
 
-/// Draws, back to front: the floor under the rug, the hidden file icons, the rug's shadow, the rug.
+/// Draws, back to front: the hidden file icons, the rug's shadow, the rug.
 final class RugRenderer {
     static let colorFormat: MTLPixelFormat = .bgra8Unorm
     static let depthFormat: MTLPixelFormat = .depth32Float_stencil8
@@ -54,7 +53,6 @@ final class RugRenderer {
     let device: MTLDevice
     let queue: MTLCommandQueue
     var rugTexture: MTLTexture?
-    var floorTexture: MTLTexture?
 
     private let clothPipeline: MTLRenderPipelineState
     private let shadowPipeline: MTLRenderPipelineState
@@ -150,9 +148,6 @@ final class RugRenderer {
 
         guard let rug = rugTexture else { return }
 
-        if let floor = floorTexture {
-            drawQuad(enc, corners: scene.floorCorners, texture: floor, uniforms: &U)
-        }
         let half = RugRenderer.iconSize / 2
         for icon in scene.icons {
             guard let tex = iconTexture(for: icon) else { continue }

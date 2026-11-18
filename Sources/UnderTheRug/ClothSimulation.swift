@@ -148,8 +148,8 @@ final class ClothSimulation {
                 add(c, r, c, r + 1, 1)
                 add(c, r, c + 1, r + 1, 0.7)   // shear
                 add(c + 1, r, c, r + 1, 0.7)
-                add(c, r, c + 2, r, 0.3)       // bending: thick wool does not fold easily
-                add(c, r, c, r + 2, 0.3)
+                add(c, r, c + 2, r, 0.55)      // bending: thick wool does not fold easily
+                add(c, r, c, r + 2, 0.55)
             }
         }
     }
@@ -168,13 +168,6 @@ final class ClothSimulation {
     func isExposed(local: SIMD2<Float>, margin: Float) -> Bool {
         guard foldSide != 0 else { return false }
         return peelDistance(local, side: foldSide) < foldDistance - foldRadius - margin
-    }
-
-    /// The floor patch under the rug body (fringe excluded), in world space: bottom-left, bottom-right, top-left, top-right.
-    func floorCorners(fringe: Float) -> [SIMD2<Float>] {
-        let hx = width / 2 - fringe * width - 2
-        let hy = height / 2 - 3
-        return [SIMD2(-hx, -hy), SIMD2(hx, -hy), SIMD2(-hx, hy), SIMD2(hx, hy)].map(toWorld)
     }
 
     // MARK: - Interaction
@@ -217,7 +210,7 @@ final class ClothSimulation {
 
     func release() {
         // A flick still throws the rug, but not into the next room.
-        let maxSpeed: Float = 9
+        let maxSpeed: Float = 5
         if isGrabbing {
             for i in positions.indices {
                 let v = positions[i] - previous[i]
@@ -274,7 +267,7 @@ final class ClothSimulation {
     func shake() {
         for i in positions.indices where inverseMass[i] > 0 {
             let u = uvs[i].x
-            previous[i].z = positions[i].z - 2.2 * (0.6 + 0.4 * sin(u * .pi * 5))
+            previous[i].z = positions[i].z - 1.4 * (0.6 + 0.4 * sin(u * .pi * 5))
         }
         quietFrames = 0
     }
@@ -304,7 +297,7 @@ final class ClothSimulation {
     private func advanceAnimations(_ dt: Float) -> Bool {
         var animating = false
         if isGrabbing {
-            grabLift += (56 - grabLift) * min(1, dt * 12)
+            grabLift += (38 - grabLift) * min(1, dt * 8)
         }
 
         if foldSide != 0 {
@@ -377,7 +370,7 @@ final class ClothSimulation {
 
     private func substep(_ h: Float) {
         let n = positions.count
-        let gravity: Float = 2600 * h * h
+        let gravity: Float = 3400 * h * h
 
         // The folded-back flap follows the curl animation directly; the rest of the cloth hangs off it.
         // Letting the solver flip a flap over by itself gets it stuck in twisted local minima.
@@ -390,7 +383,7 @@ final class ClothSimulation {
             previous.withUnsafeMutableBufferPointer { q in
                 solverMass.withUnsafeBufferPointer { w in
                     for i in 0..<n where w[i] > 0 {
-                        let v = (p[i] - q[i]) * 0.993
+                        let v = (p[i] - q[i]) * 0.985
                         q[i] = p[i]
                         p[i] += v
                         p[i].z -= gravity
@@ -488,7 +481,7 @@ final class ClothSimulation {
             center = goalCenter
             angle = goalAngle
         }
-        let base: Float = isGrabbing ? 0.003 : (frameTarget != nil ? 0.08 : 0.03)
+        let base: Float = isGrabbing ? 0.007 : (frameTarget != nil ? 0.08 : 0.03)
         let c = cos(goalAngle), s = sin(goalAngle)
         positions.withUnsafeMutableBufferPointer { p in
             previous.withUnsafeMutableBufferPointer { q in
@@ -520,7 +513,7 @@ final class ClothSimulation {
         if hoverBump.scale > 0.01 { active.append(hoverBump) }
         let c = cos(-angle), s = sin(-angle)
         let center = self.center
-        let friction: Float = 0.14
+        let friction: Float = 0.24
 
         positions.withUnsafeMutableBufferPointer { p in
             previous.withUnsafeMutableBufferPointer { q in

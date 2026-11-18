@@ -34,11 +34,6 @@ enum TextureFactory {
         return texture(from: ctx, device: device, queue: queue, mipmapped: true)
     }
 
-    static func floorTexture(device: MTLDevice, queue: MTLCommandQueue) -> MTLTexture? {
-        guard let image = floorImage() else { return nil }
-        return texture(from: image, device: device, queue: queue, mipmapped: true)
-    }
-
     static func texture(from image: CGImage, device: MTLDevice, queue: MTLCommandQueue, mipmapped: Bool) -> MTLTexture? {
         guard let ctx = bitmap(width: image.width, height: image.height, draw: { ctx in
             ctx.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))

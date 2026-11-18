@@ -54,11 +54,6 @@ final class RugView: MTKView, MTKViewDelegate, NSDraggingSource {
         delegate = self
         registerForDraggedTypes([.fileURL])
 
-        let queue = renderer.queue
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let floor = TextureFactory.floorTexture(device: device, queue: queue)
-            DispatchQueue.main.async { self?.renderer.floorTexture = floor }
-        }
         loadTexture(for: style, shake: false)
     }
 
@@ -127,7 +122,7 @@ final class RugView: MTKView, MTKViewDelegate, NSDraggingSource {
     /// Every lump puffs up once, for when a whole desktop just went under.
     func rippleEverything() {
         for item in items {
-            sim.ripple(atLocal: localPosition(of: item), strength: 1.4, radius: 70)
+            sim.ripple(atLocal: localPosition(of: item), strength: 1.0, radius: 70)
         }
         wake()
     }
@@ -218,7 +213,7 @@ final class RugView: MTKView, MTKViewDelegate, NSDraggingSource {
                 TextureFactory.iconImage(path: path, name: name)
             }
         }
-        return RugScene(sim: sim, icons: icons, floorCorners: sim.floorCorners(fringe: Float(RugPattern.fringeFraction)),
+        return RugScene(sim: sim, icons: icons,
                         viewSize: SIMD2(Float(bounds.width), Float(bounds.height)))
     }
 
@@ -348,14 +343,14 @@ final class RugView: MTKView, MTKViewDelegate, NSDraggingSource {
 
         if (sender.draggingSource as AnyObject?) === self, let id = draggingOutID {
             onMoveItem?(id, normalized)
-            sim.ripple(atLocal: local, strength: 1.2)
+            sim.ripple(atLocal: local, strength: 0.8)
             return true
         }
         let urls = sender.draggingPasteboard.readObjects(forClasses: [NSURL.self],
                                                          options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
         guard !urls.isEmpty else { return false }
         onShove?(urls, normalized)
-        sim.ripple(atLocal: local, strength: 2.4)
+        sim.ripple(atLocal: local, strength: 1.6)
         wake()
         return true
     }
