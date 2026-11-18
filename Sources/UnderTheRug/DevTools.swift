@@ -105,6 +105,25 @@ enum DevTools {
                 sim.update(dt: 1.0 / 60)
             }
         }
+        if ProcessInfo.processInfo.environment["RUG_THROW"] != nil {
+            // Fling the rug hard to the right, let go, then bring it back the way the app does.
+            let p0 = sim.toWorld(SIMD2(sim.width * 0.4, 0))
+            sim.grab(atWorld: p0)
+            for f in 0..<6 {
+                sim.drag(toWorld: p0 + SIMD2(Float(f) * 120, 0))
+                sim.update(dt: 1.0 / 60)
+            }
+            sim.release()
+            for _ in 0..<120 { sim.update(dt: 1.0 / 60) }
+            print("after throw centre \(sim.center)")
+            sim.moveFrame(to: size / 2, angle: -0.035)
+            var frames = 0
+            while sim.isMovingFrame && frames < 600 {
+                sim.update(dt: 1.0 / 60)
+                frames += 1
+            }
+            print("back at \(sim.center) after \(frames) frames")
+        }
         let simTime = (CACurrentMediaTime() - start) * 1000
         print(String(format: "simulated in %.0f ms; settled at frame %@", simTime, settledAt.map(String.init) ?? "never"))
         let zs = sim.positions.map(\.z)

@@ -86,20 +86,31 @@ final class RugView: MTKView, MTKViewDelegate, NSDraggingSource {
         wake()
     }
 
+    /// Lays the rug flat, straight-ish, in the middle of the screen.
     func bringBack() {
-        sim.moveFrame(to: defaultCenter, angle: sim.angle)
+        sim.release()
+        sim.unfold()
+        sim.moveFrame(to: defaultCenter, angle: -0.035)
         wake()
     }
 
-    /// Moves the rug back on screen when it ended up (mostly) outside after a display change.
+    /// Glides the rug back when it ended up (mostly) off screen: after a throw or a display change.
+    /// At least about a third of the rug stays in view.
     func keepOnScreen() {
-        let margin: Float = 80
-        let c = sim.center
-        let w = Float(bounds.width), h = Float(bounds.height)
-        if c.x < margin || c.y < margin || c.x > w - margin || c.y > h - margin {
-            sim.moveFrame(to: SIMD2(min(max(c.x, margin), w - margin), min(max(c.y, margin), h - margin)), angle: sim.angle)
+        if let target = onScreenCenter() {
+            sim.moveFrame(to: target, angle: sim.angle)
         }
         wake()
+    }
+
+    /// Where the rug centre should go to be back in view, or nil when it already is.
+    private func onScreenCenter() -> SIMD2<Float>? {
+        let mx = sim.width * 0.3, my = sim.height * 0.3
+        let w = Float(bounds.width), h = Float(bounds.height)
+        let menuBar: Float = 24
+        let c = sim.center
+        let clamped = SIMD2(min(max(c.x, mx), w - mx), min(max(c.y, my), h - menuBar - my))
+        return simd_distance(clamped, c) > 0.5 ? clamped : nil
     }
 
     func toggleLift() {
@@ -179,6 +190,9 @@ final class RugView: MTKView, MTKViewDelegate, NSDraggingSource {
         guard renderer.rugTexture != nil else { return }
 
         sim.update(dt: dt)
+        if !sim.isGrabbing && !sim.isMovingFrame, let target = onScreenCenter() {
+            sim.moveFrame(to: target, angle: sim.angle)
+        }
 
         guard let pass = currentRenderPassDescriptor,
               let drawable = currentDrawable,

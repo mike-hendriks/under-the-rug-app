@@ -228,6 +228,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func populate(_ menu: NSMenu) {
         menu.removeAllItems()
+        // First thing in the menu: for when the rug got thrown off the screen.
+        let reset = addItem(menu, "Bring the Rug Back", #selector(bringBack))
+        reset.keyEquivalent = "r"
+        reset.image = NSImage(systemSymbolName: "arrow.uturn.backward.circle", accessibilityDescription: nil)
+        menu.addItem(.separator())
         let items = stash.items
         let header = NSMenuItem(title: items.isEmpty ? "Nothing under the rug yet" : "Under the rug (\(items.count))", action: nil, keyEquivalent: "")
         header.isEnabled = false
@@ -283,7 +288,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         sizeItem.submenu = sizeMenu
         menu.addItem(sizeItem)
         addItem(menu, "Straighten the Rug", #selector(straighten))
-        addItem(menu, "Bring the Rug Back", #selector(bringBack))
 
         menu.addItem(.separator())
         let login = addItem(menu, "Open at Login", #selector(toggleOpenAtLogin))

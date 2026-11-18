@@ -83,6 +83,7 @@ final class ClothSimulation {
     func goalPosition(_ i: Int) -> SIMD3<Float> { goal[i] }
     func inverseMassOf(_ i: Int) -> Float { inverseMass[i] }
     var isGrabbing: Bool { !grabbed.isEmpty }
+    var isMovingFrame: Bool { frameTarget != nil }
     var isFolded: Bool { foldSide != 0 && foldTarget > 0 }
     var isSettled: Bool { quietFrames > 45 }
     var spacing: Float { width / Float(cols - 1) }
@@ -215,6 +216,15 @@ final class ClothSimulation {
     }
 
     func release() {
+        // A flick still throws the rug, but not into the next room.
+        let maxSpeed: Float = 9
+        if isGrabbing {
+            for i in positions.indices {
+                let v = positions[i] - previous[i]
+                let speed = simd_length(v)
+                if speed > maxSpeed { previous[i] = positions[i] - v / speed * maxSpeed }
+            }
+        }
         for g in grabbed { inverseMass[g.index] = 1 }
         grabbed.removeAll()
         quietFrames = 0
@@ -467,13 +477,18 @@ final class ClothSimulation {
             // Walk the goal frame towards the target a little per step, the cloth follows.
             let delta = target.center - center
             let dist = simd_length(delta)
-            goalCenter = dist > 2.5 ? center + delta / dist * 2.5 : target.center
+            // Far away (thrown off screen) it hurries back, close by it glides.
+            let step = max(2.5, dist * 0.04)
+            goalCenter = dist > step ? center + delta / dist * step : target.center
             var da = target.angle - angle
             da = atan2(sin(da), cos(da))
             goalAngle = angle + max(-0.01, min(0.01, da))
             if dist < 0.5 && abs(da) < 0.002 { frameTarget = nil }
+            // With the frame fit paused (a held fold) nothing else would move the frame along.
+            center = goalCenter
+            angle = goalAngle
         }
-        let base: Float = isGrabbing ? 0.003 : 0.03
+        let base: Float = isGrabbing ? 0.003 : (frameTarget != nil ? 0.08 : 0.03)
         let c = cos(goalAngle), s = sin(goalAngle)
         positions.withUnsafeMutableBufferPointer { p in
             previous.withUnsafeMutableBufferPointer { q in
