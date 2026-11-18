@@ -57,4 +57,5 @@ swift build -c release
 | `RugView.swift` | One view per screen: mouse, drag and drop in both directions |
 | `Stash.swift` | Moves files under a rug and back |
 | `AppDelegate.swift` | Windows per screen, click-through, menu bar |
-| `Demo.swift` | Offscreen rendering and the scripted launch GIF |
+| `Offscreen.swift` | Renders rugs without a window, with a camera |
+| `LaunchDemo.swift` | The scripted launch GIF: kinetic type, camera moves, the rugs doing their thing |
