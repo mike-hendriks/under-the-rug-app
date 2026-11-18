@@ -9,6 +9,7 @@ import simd
 ///     UnderTheRug --export-iconset <dir.iconset>
 ///     UnderTheRug --export-textures <dir>
 ///     UnderTheRug --snapshot <file.png> [--style id] [--fold] [--grab] [--frames n]
+///     UnderTheRug --demo <file.gif>
 enum DevTools {
     static func handle(_ args: [String]) -> Bool {
         func value(after flag: String) -> String? {
@@ -21,6 +22,10 @@ enum DevTools {
         }
         if let dir = value(after: "--export-textures") {
             exportTextures(to: URL(fileURLWithPath: dir))
+            return true
+        }
+        if let file = value(after: "--demo") {
+            LaunchDemo.render(to: URL(fileURLWithPath: file))
             return true
         }
         if let file = value(after: "--snapshot") {
@@ -143,45 +148,8 @@ enum DevTools {
             scenes.append(RugScene(sim: other, icons: [], texture: second))
         }
 
-        let w = Int(size.x) * scale, h = Int(size.y) * scale
-        let colorDesc = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: RugRenderer.colorFormat, width: w, height: h, mipmapped: false)
-        colorDesc.usage = [.renderTarget]
-        colorDesc.storageMode = .managed
-        let depthDesc = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: RugRenderer.depthFormat, width: w, height: h, mipmapped: false)
-        depthDesc.usage = [.renderTarget]
-        depthDesc.storageMode = .private
-        guard let color = device.makeTexture(descriptor: colorDesc), let depth = device.makeTexture(descriptor: depthDesc) else { return }
-
-        let pass = MTLRenderPassDescriptor()
-        pass.colorAttachments[0].texture = color
-        pass.colorAttachments[0].loadAction = .clear
-        pass.colorAttachments[0].storeAction = .store
-        pass.colorAttachments[0].clearColor = MTLClearColor(red: 0.2, green: 0.27, blue: 0.36, alpha: 1)
-        pass.depthAttachment.texture = depth
-        pass.depthAttachment.clearDepth = 1
-        pass.depthAttachment.loadAction = .clear
-        pass.depthAttachment.storeAction = .dontCare
-        pass.stencilAttachment.texture = depth
-        pass.stencilAttachment.clearStencil = 0
-        pass.stencilAttachment.loadAction = .clear
-        pass.stencilAttachment.storeAction = .dontCare
-
-        guard let cb = renderer.queue.makeCommandBuffer(), let enc = cb.makeRenderCommandEncoder(descriptor: pass) else { return }
-        renderer.encode(scenes, viewOrigin: .zero, viewSize: size, into: enc)
-        enc.endEncoding()
-        if let blit = cb.makeBlitCommandEncoder() {
-            blit.synchronize(resource: color)
-            blit.endEncoding()
-        }
-        cb.commit()
-        cb.waitUntilCompleted()
-
-        var bytes = [UInt8](repeating: 0, count: w * h * 4)
-        color.getBytes(&bytes, bytesPerRow: w * 4, from: MTLRegionMake2D(0, 0, w, h), mipmapLevel: 0)
-        let info = CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.premultipliedFirst.rawValue
-        guard let space = CGColorSpace(name: CGColorSpace.sRGB),
-              let ctx = CGContext(data: &bytes, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4, space: space, bitmapInfo: info),
-              let image = ctx.makeImage() else { return }
+        guard let image = Offscreen.render(scenes, renderer: renderer, size: size, scale: scale,
+                                           clear: MTLClearColor(red: 0.2, green: 0.27, blue: 0.36, alpha: 1)) else { return }
         writePNG(image, to: url)
         print("wrote \(url.path)")
     }

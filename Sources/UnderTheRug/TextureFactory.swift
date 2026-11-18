@@ -60,6 +60,10 @@ enum TextureFactory {
 
     /// A Finder-style icon with its name underneath, at 2x for Retina.
     static func iconImage(path: String, name: String) -> CGImage? {
+        iconImage(icon: NSWorkspace.shared.icon(forFile: path), name: name)
+    }
+
+    static func iconImage(icon: NSImage, name: String) -> CGImage? {
         let scale: CGFloat = 2
         let size = RugRenderer.iconSize
         let w = Int(CGFloat(size.x) * scale), h = Int(CGFloat(size.y) * scale)
@@ -73,7 +77,7 @@ enum TextureFactory {
             iconShadow.shadowBlurRadius = 4
             iconShadow.shadowOffset = NSSize(width: 0, height: -2)
             iconShadow.set()
-            NSWorkspace.shared.icon(forFile: path).draw(in: NSRect(x: 24, y: 38, width: 64, height: 64))
+            icon.draw(in: NSRect(x: 24, y: 38, width: 64, height: 64))
 
             let textShadow = NSShadow()
             textShadow.shadowColor = NSColor.black.withAlphaComponent(0.9)
