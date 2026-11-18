@@ -22,6 +22,8 @@ cp Resources/Info.plist "$APP/Contents/Info.plist"
 if [[ -n "${VERSION:-}" ]]; then
   /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$APP/Contents/Info.plist"
   /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${BUILD_NUMBER:-1}" "$APP/Contents/Info.plist"
+  # Only versioned builds update themselves from GitHub Releases; local development builds never do.
+  /usr/libexec/PlistBuddy -c "Add :UTRReleaseBuild bool true" "$APP/Contents/Info.plist"
 fi
 
 # The app draws its own icon with the same code that weaves the rugs.

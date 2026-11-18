@@ -21,7 +21,9 @@ final class Rug {
 
     convenience init(config: RugConfig) {
         self.init(id: config.id, style: RugStyle.named(config.style), size: RugSize(rawValue: config.size) ?? .medium,
-                  center: SIMD2(config.x, config.y), angle: config.angle, dropHeight: 160)
+                  center: SIMD2(config.x, config.y), angle: config.angle,
+                  // After an update the rugs are simply still there; on a normal launch they flutter down.
+                  dropHeight: Updater.launchedAfterUpdate ? 0 : 160)
     }
 
     var config: RugConfig {

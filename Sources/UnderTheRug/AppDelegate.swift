@@ -11,6 +11,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var views: [RugView] = []
     private var statusItem: NSStatusItem!
     private let stash = Stash()
+    private let updater = Updater()
     private var passthroughTimer: Timer?
     private var swatches: [String: NSImage] = [:]
     /// The rug a menu acts on: the one right-clicked, or else the one touched last.
@@ -49,6 +50,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                                                name: NSApplication.didChangeScreenParametersNotification, object: nil)
         renderSwatches()
         saveRugs()
+        updater.canInstallNow = { [weak self] in self?.world.isSettled ?? true }
+        updater.start()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -403,11 +406,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func finish(_ menu: NSMenu) {
         menu.addItem(.separator())
+        addUpdateItems(to: menu)
         let login = addItem(menu, "Open at Login", #selector(toggleOpenAtLogin))
         login.state = SMAppService.mainApp.status == .enabled ? .on : .off
         let quit = NSMenuItem(title: "Quit Under the Rug", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         menu.addItem(quit)
     }
+
+    private func addUpdateItems(to menu: NSMenu) {
+        guard updater.isReleaseBuild else {
+            let dev = NSMenuItem(title: "Development build (no updates)", action: nil, keyEquivalent: "")
+            dev.isEnabled = false
+            menu.addItem(dev)
+            return
+        }
+        let status: String
+        switch updater.state {
+        case .available(let version): status = "Version \(updater.currentVersion), \(version) is out"
+        case .downloading(let version): status = "Updating to \(version)…"
+        case .checking: status = "Version \(updater.currentVersion), checking…"
+        default: status = "Version \(updater.currentVersion)"
+        }
+        let info = NSMenuItem(title: status, action: nil, keyEquivalent: "")
+        info.isEnabled = false
+        menu.addItem(info)
+        if case .available(let version) = updater.state {
+            let install = addItem(menu, "Install \(version) and Restart", #selector(installUpdate))
+            install.image = NSImage(systemSymbolName: "arrow.down.circle", accessibilityDescription: nil)
+        }
+        addItem(menu, "Check for Updates…", #selector(checkForUpdates))
+        let auto = addItem(menu, "Install Updates Automatically", #selector(toggleAutoUpdate))
+        auto.state = updater.installsAutomatically ? .on : .off
+    }
+
+    @objc private func checkForUpdates() { updater.check(userInitiated: true) }
+    @objc private func installUpdate() { updater.installAvailableUpdate() }
+    @objc private func toggleAutoUpdate() { updater.installsAutomatically.toggle() }
 
     @discardableResult
     private func addItem(_ menu: NSMenu, _ title: String, _ action: Selector) -> NSMenuItem {

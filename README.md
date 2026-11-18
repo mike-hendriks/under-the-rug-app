@@ -10,6 +10,8 @@ Grab `UnderTheRug-<version>.zip` from the [latest release](https://github.com/mi
 
 The app is not notarized by Apple, so macOS blocks the first launch. Open it once, then go to **System Settings → Privacy & Security** and click **Open Anyway**.
 
+From 1.1.0 on, Under the Rug keeps itself up to date: it checks GitHub Releases after launch and every six hours, verifies the download (SHA-256, bundle identifier, version, code signature) and installs it once your rugs are at rest. Turn it off with **Install Updates Automatically** in the menu, or use **Check for Updates…**. Version 1.0.0 has no updater: download 1.1.0 once by hand.
+
 ## What it does
 
 - **Drop files on a rug** to shove them under. They move to `~/Library/Application Support/Under the Rug/Stash` and show up as lumps in the cloth.
