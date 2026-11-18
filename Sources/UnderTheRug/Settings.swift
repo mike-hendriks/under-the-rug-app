@@ -24,36 +24,42 @@ enum RugSize: String, CaseIterable {
     }
 }
 
+/// What is remembered about one rug: its look and where it lies, in global screen points.
+struct RugConfig: Codable {
+    var id: UUID
+    var style: String
+    var size: String
+    var x: Float
+    var y: Float
+    var angle: Float
+}
+
 /// What the app remembers between launches.
 enum Settings {
     private static let defaults = UserDefaults.standard
 
-    static var style: RugStyle {
-        get { RugStyle.named(defaults.string(forKey: "style") ?? "") }
-        set { defaults.set(newValue.id, forKey: "style") }
-    }
-
-    static var size: RugSize {
-        get { RugSize(rawValue: defaults.string(forKey: "size") ?? "") ?? .medium }
-        set { defaults.set(newValue.rawValue, forKey: "size") }
-    }
-
-    static var center: SIMD2<Float>? {
+    static var rugs: [RugConfig] {
         get {
-            guard let a = defaults.array(forKey: "center") as? [Double], a.count == 2 else { return nil }
-            return SIMD2(Float(a[0]), Float(a[1]))
+            if let data = defaults.data(forKey: "rugs"),
+               let configs = try? JSONDecoder().decode([RugConfig].self, from: data) {
+                return configs
+            }
+            return legacyRug.map { [$0] } ?? []
         }
         set {
-            if let v = newValue {
-                defaults.set([Double(v.x), Double(v.y)], forKey: "center")
-            } else {
-                defaults.removeObject(forKey: "center")
+            if let data = try? JSONEncoder().encode(newValue) {
+                defaults.set(data, forKey: "rugs")
             }
         }
     }
 
-    static var angle: Float {
-        get { (defaults.object(forKey: "angle") as? Double).map { Float($0) } ?? -0.035 }
-        set { defaults.set(Double(newValue), forKey: "angle") }
+    /// The single rug of version 1, stored as loose keys.
+    private static var legacyRug: RugConfig? {
+        guard let center = defaults.array(forKey: "center") as? [Double], center.count == 2 else { return nil }
+        return RugConfig(id: UUID(),
+                         style: defaults.string(forKey: "style") ?? RugStyle.all[0].id,
+                         size: defaults.string(forKey: "size") ?? RugSize.medium.rawValue,
+                         x: Float(center[0]), y: Float(center[1]),
+                         angle: (defaults.object(forKey: "angle") as? Double).map { Float($0) } ?? -0.035)
     }
 }

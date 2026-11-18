@@ -6,6 +6,7 @@ enum Shaders {
 
     struct Uniforms {
         float2 viewSize;
+        float2 viewOrigin;
         float2 perspCenter;
         float2 shadowBase;
         float2 shadowSlope;
@@ -15,7 +16,7 @@ enum Shaders {
         float shadowAlpha;
         float aspect;
         float quadAlpha;
-        float pad;
+        float layer;
     };
 
     struct ClothVertex { packed_float3 position; packed_float3 normal; packed_float2 uv; };
@@ -33,13 +34,14 @@ enum Shaders {
         float2 uv;
     };
 
-    // Points in view space to clip space, with a mild perspective so lifted cloth grows a little.
+    // World points (global screen space) to this view's clip space, with a mild perspective so lifted
+    // cloth grows a little. Each rug gets its own depth band so overlapping rugs stack cleanly.
     static float4 toClip(float3 p, constant Uniforms& U) {
         float z = min(p.z, U.perspDist * 0.5);
         float s = U.perspDist / (U.perspDist - z);
         float2 xy = U.perspCenter + (p.xy - U.perspCenter) * s;
-        float2 ndc = xy / U.viewSize * 2.0 - 1.0;
-        return float4(ndc, clamp(0.5 - p.z * 0.001, 0.0, 1.0), 1.0);
+        float2 ndc = (xy - U.viewOrigin) / U.viewSize * 2.0 - 1.0;
+        return float4(ndc, clamp(0.9 - U.layer * 0.04 - p.z * 0.0004, 0.0, 1.0), 1.0);
     }
 
     static float hash21(float2 p) {

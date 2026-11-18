@@ -1,10 +1,12 @@
 import CoreGraphics
+import Foundation
 import Metal
 import simd
 
-/// Mirrors `Uniforms` in Shaders.swift; keep the field order identical (64 bytes).
+/// Mirrors `Uniforms` in Shaders.swift; keep the field order identical (72 bytes).
 struct Uniforms {
     var viewSize: SIMD2<Float>
+    var viewOrigin: SIMD2<Float>
     var perspCenter: SIMD2<Float>
     var shadowBase: SIMD2<Float>
     var shadowSlope: SIMD2<Float>
@@ -14,7 +16,8 @@ struct Uniforms {
     var shadowAlpha: Float
     var aspect: Float
     var quadAlpha: Float
-    var pad: Float = 0
+    /// Stacking order of the rug being drawn: higher layers win the depth test.
+    var layer: Float
 }
 
 struct ClothVertex {
@@ -27,24 +30,26 @@ struct QuadVertex {
     var x: Float, y: Float, u: Float, v: Float
 }
 
-/// A hidden file's icon, lying on the desktop under the rug.
+/// A hidden file's icon, lying on the desktop under its rug.
 struct IconPlacement {
     let id: UUID
     let center: SIMD2<Float>
     let image: () -> CGImage?
 }
 
+/// One rug to draw, with what lies under it.
 struct RugScene {
     let sim: ClothSimulation
     let icons: [IconPlacement]
-    let viewSize: SIMD2<Float>
+    let texture: MTLTexture
 }
 
 enum RendererError: Error {
     case setup(String)
 }
 
-/// Draws, back to front: the hidden file icons, the rug's shadow, the rug.
+/// Shared by every screen. Draws the rugs bottom to top, each as: the icons hidden under it,
+/// its shadow, the rug itself.
 final class RugRenderer {
     static let colorFormat: MTLPixelFormat = .bgra8Unorm
     static let depthFormat: MTLPixelFormat = .depth32Float_stencil8
@@ -52,7 +57,6 @@ final class RugRenderer {
 
     let device: MTLDevice
     let queue: MTLCommandQueue
-    var rugTexture: MTLTexture?
 
     private let clothPipeline: MTLRenderPipelineState
     private let shadowPipeline: MTLRenderPipelineState
@@ -61,6 +65,8 @@ final class RugRenderer {
     private let flatDepth: MTLDepthStencilState
     private let shadowDepth: MTLDepthStencilState
     private let sampler: MTLSamplerState
+    private var rugTextures: [String: MTLTexture] = [:]
+    private var loadingStyles: Set<String> = []
     private var iconTextures: [UUID: MTLTexture] = [:]
     private var indexBuffer: MTLBuffer?
     private var indexCount = 0
@@ -101,13 +107,14 @@ final class RugRenderer {
         let flat = MTLDepthStencilDescriptor()
         flat.depthCompareFunction = .always
         flat.isDepthWriteEnabled = false
-        // The shadow writes each pixel once, so a folded rug does not cast a double-dark shadow.
+        // Each rug's shadow darkens a pixel once (a folded rug would otherwise double it), yet still
+        // falls on the rugs below: rug n writes n into the stencil and only passes where it is lower.
         let shadow = MTLDepthStencilDescriptor()
         shadow.depthCompareFunction = .always
         shadow.isDepthWriteEnabled = false
         let stencil = MTLStencilDescriptor()
-        stencil.stencilCompareFunction = .equal
-        stencil.depthStencilPassOperation = .incrementClamp
+        stencil.stencilCompareFunction = .greater
+        stencil.depthStencilPassOperation = .replace
         shadow.frontFaceStencil = stencil
         shadow.backFaceStencil = stencil
         guard let c = device.makeDepthStencilState(descriptor: cloth),
@@ -128,13 +135,54 @@ final class RugRenderer {
         sampler = smp
     }
 
+    // MARK: - Textures
+
+    /// The woven texture for `style`, or nil while it is still being generated (`ready` runs once it is).
+    func texture(for style: RugStyle, ready: @escaping () -> Void) -> MTLTexture? {
+        if let texture = rugTextures[style.id] { return texture }
+        guard !loadingStyles.contains(style.id) else { return nil }
+        loadingStyles.insert(style.id)
+        let device = device, queue = queue
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let texture = TextureFactory.rugTexture(device: device, queue: queue, style: style)
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.loadingStyles.remove(style.id)
+                self.rugTextures[style.id] = texture
+                ready()
+            }
+        }
+        return nil
+    }
+
+    func loadedTexture(for style: RugStyle) -> MTLTexture? { rugTextures[style.id] }
+
+    /// Seeds the cache, for the offscreen snapshot tool.
+    func setTexture(_ texture: MTLTexture, for style: RugStyle) { rugTextures[style.id] = texture }
+
+    /// Frees the 15 MB per style that no rug wears any more.
+    func purgeRugTextures(keeping styleIDs: Set<String>) {
+        rugTextures = rugTextures.filter { styleIDs.contains($0.key) }
+    }
+
     func purgeIcons(keeping ids: Set<UUID>) {
         iconTextures = iconTextures.filter { ids.contains($0.key) }
     }
 
-    func encode(_ scene: RugScene, into enc: MTLRenderCommandEncoder) {
+    // MARK: - Drawing
+
+    /// Draws `scenes` (bottom rug first) into a view that shows the part of world space starting at `viewOrigin`.
+    func encode(_ scenes: [RugScene], viewOrigin: SIMD2<Float>, viewSize: SIMD2<Float>, into enc: MTLRenderCommandEncoder) {
+        enc.setCullMode(.none)
+        for (layer, scene) in scenes.enumerated() {
+            encode(scene, layer: layer, viewOrigin: viewOrigin, viewSize: viewSize, into: enc)
+        }
+    }
+
+    private func encode(_ scene: RugScene, layer: Int, viewOrigin: SIMD2<Float>, viewSize: SIMD2<Float>, into enc: MTLRenderCommandEncoder) {
         let sim = scene.sim
-        var U = Uniforms(viewSize: scene.viewSize,
+        var U = Uniforms(viewSize: viewSize,
+                         viewOrigin: viewOrigin,
                          perspCenter: sim.center,
                          shadowBase: SIMD2(2.5, -3.5),
                          shadowSlope: SIMD2(0.32, -0.42),
@@ -143,10 +191,8 @@ final class RugRenderer {
                          fringe: Float(RugPattern.fringeFraction),
                          shadowAlpha: 0.38,
                          aspect: sim.width / sim.height,
-                         quadAlpha: 1)
-        enc.setCullMode(.none)
-
-        guard let rug = rugTexture else { return }
+                         quadAlpha: 1,
+                         layer: Float(layer))
 
         let half = RugRenderer.iconSize / 2
         for icon in scene.icons {
@@ -165,10 +211,10 @@ final class RugRenderer {
 
         enc.setRenderPipelineState(shadowPipeline)
         enc.setDepthStencilState(shadowDepth)
-        enc.setStencilReferenceValue(0)
+        enc.setStencilReferenceValue(UInt32(min(layer + 1, 255)))
         enc.setVertexBuffer(vb, offset: 0, index: 0)
         enc.setVertexBytes(&U, length: uniformLength, index: 1)
-        enc.setFragmentTexture(rug, index: 0)
+        enc.setFragmentTexture(scene.texture, index: 0)
         enc.setFragmentSamplerState(sampler, index: 0)
         enc.setFragmentBytes(&U, length: uniformLength, index: 0)
         enc.drawIndexedPrimitives(type: .triangle, indexCount: indexCount, indexType: .uint16, indexBuffer: ib, indexBufferOffset: 0)

@@ -3,82 +3,115 @@ import Metal
 import ServiceManagement
 import simd
 
-/// Owns the rug window, the stash of hidden files and the menu bar item.
+/// Owns the windows (one per screen), the rugs, the stash of hidden files and the menu bar item.
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
-    private var window: RugWindow!
-    private var rugView: RugView!
+    private var device: MTLDevice!
+    private var world: RugWorld!
+    private var windows: [RugWindow] = []
+    private var views: [RugView] = []
     private var statusItem: NSStatusItem!
     private let stash = Stash()
     private var passthroughTimer: Timer?
     private var swatches: [String: NSImage] = [:]
+    /// The rug a menu acts on: the one right-clicked, or else the one touched last.
+    private weak var menuRug: Rug?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         stash.load()
-        guard let device = MTLCreateSystemDefaultDevice(), let screen = NSScreen.screens.first else {
+        guard let device = MTLCreateSystemDefaultDevice() else {
             fail("This Mac has no Metal GPU, so the rug can't be drawn.")
             return
         }
-        window = RugWindow(screen: screen)
-        let frame = NSRect(origin: .zero, size: screen.frame.size)
-        var center = Settings.center
-        if let c = center, c.x < 0 || c.y < 0 || c.x > Float(frame.width) || c.y > Float(frame.height) { center = nil }
+        self.device = device
         do {
-            rugView = try RugView(frame: frame, device: device, style: Settings.style, size: Settings.size,
-                                  center: center, angle: Settings.angle)
+            world = RugWorld(renderer: try RugRenderer(device: device))
         } catch {
             fail("The rug's shaders failed to load: \(error.localizedDescription)")
             return
         }
-        window.contentView = rugView
-        wireUpRug()
-        rugView.items = stash.items
-        window.orderFrontRegardless()
+        wireUpWorld()
 
+        let configs = Settings.rugs
+        if configs.isEmpty {
+            world.add(newRug(style: RugStyle.all[0], size: .medium, on: NSScreen.screens.first))
+        } else {
+            configs.forEach { world.add(Rug(config: $0)) }
+        }
+        if let first = world.rugs.first {
+            stash.adoptOrphans(knownRugs: Set(world.rugs.map(\.id)), into: first.id)
+        }
+        world.items = stash.items
+
+        buildWindows()
         setUpStatusItem()
         startPassthrough()
         NotificationCenter.default.addObserver(self, selector: #selector(screensChanged),
                                                name: NSApplication.didChangeScreenParametersNotification, object: nil)
         renderSwatches()
+        saveRugs()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        guard let rugView else { return }
-        Settings.center = rugView.sim.center
-        Settings.angle = rugView.sim.angle
+        saveRugs()
     }
 
-    private func wireUpRug() {
-        rugView.onShove = { [weak self] urls, position in self?.shove(urls, at: position) }
-        rugView.onMoveItem = { [weak self] id, position in
-            self?.stash.move(id, to: position)
+    private func saveRugs() {
+        guard let world else { return }
+        Settings.rugs = world.rugs.map(\.config)
+    }
+
+    private func wireUpWorld() {
+        world.onWake = { [weak self] in self?.views.forEach { $0.wake() } }
+        world.onSettled = { [weak self] in self?.saveRugs() }
+        world.onShove = { [weak self] urls, rug, position in self?.shove(urls, under: rug, at: position) }
+        world.onMoveItem = { [weak self] id, rug, position in
+            self?.stash.move(id, to: position, rugID: rug.id)
             self?.refreshItems()
         }
-        rugView.onOpenItem = { [weak self] id in
+        world.onOpenItem = { [weak self] id in
             guard let item = self?.stash.items.first(where: { $0.id == id }) else { return }
             NSWorkspace.shared.open(URL(fileURLWithPath: item.stashedPath))
         }
-        rugView.onNeedsValidation = { [weak self] in
+        world.onNeedsValidation = { [weak self] in
             guard let self, self.stash.pruneMissing() else { return }
             self.refreshItems()
         }
-        rugView.onSettled = { center, angle in
-            Settings.center = center
-            Settings.angle = angle
-        }
-        rugView.menuProvider = { [weak self] in
+        world.menuProvider = { [weak self] rug in
             let menu = NSMenu()
-            self?.populate(menu)
+            self?.populate(menu, for: rug)
             return menu
         }
     }
 
     private func refreshItems() {
-        rugView.items = stash.items
+        world.items = stash.items
     }
 
-    // MARK: - Click-through
+    // MARK: - Screens
 
-    /// The window covers the whole screen but only takes clicks (and file drops) over the rug.
+    /// One transparent window per screen, all drawing the same rugs in global coordinates,
+    /// so a rug can be dragged from one display to the next.
+    private func buildWindows() {
+        windows.forEach { $0.orderOut(nil) }
+        windows = []
+        views = []
+        for screen in NSScreen.screens {
+            let window = RugWindow(screen: screen)
+            let view = RugView(frame: NSRect(origin: .zero, size: screen.frame.size), device: device, world: world)
+            window.contentView = view
+            window.orderFrontRegardless()
+            windows.append(window)
+            views.append(view)
+        }
+        world.screens = NSScreen.screens.map(\.frame)
+        world.wake()
+    }
+
+    @objc private func screensChanged() {
+        buildWindows()
+    }
+
+    /// The windows cover whole screens but only take clicks (and file drops) over a rug.
     private func startPassthrough() {
         let timer = Timer(timeInterval: 1.0 / 60, repeats: true) { [weak self] _ in self?.updatePassthrough() }
         RunLoop.main.add(timer, forMode: .common)
@@ -86,25 +119,100 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func updatePassthrough() {
-        let p = window.convertPoint(fromScreen: NSEvent.mouseLocation)
-        let wants = rugView.wantsMouse(at: p)
-        if window.ignoresMouseEvents == wants {
+        let m = NSEvent.mouseLocation
+        let wants = world.wantsMouse(at: SIMD2(Float(m.x), Float(m.y)))
+        for window in windows where window.ignoresMouseEvents == wants {
             window.ignoresMouseEvents = !wants
         }
     }
 
-    @objc private func screensChanged() {
-        guard let screen = NSScreen.screens.first else { return }
-        window.setFrame(screen.frame, display: true)
-        rugView.frame = NSRect(origin: .zero, size: screen.frame.size)
-        rugView.keepOnScreen()
+    /// The screen under the mouse pointer, where new rugs land.
+    private var screenUnderMouse: NSScreen? {
+        let m = NSEvent.mouseLocation
+        return NSScreen.screens.first { $0.frame.contains(m) } ?? NSScreen.screens.first
+    }
+
+    // MARK: - Rugs
+
+    private func newRug(style: RugStyle, size: RugSize, on screen: NSScreen?) -> Rug {
+        let frame = screen?.frame ?? CGRect(x: 0, y: 0, width: 1440, height: 900)
+        let jitter = SIMD2(Float.random(in: -60...60), Float.random(in: -40...40))
+        let center = SIMD2(Float(frame.midX), Float(frame.minY + frame.height * 0.45)) + jitter
+        return Rug(style: style, size: size, center: center, angle: Float.random(in: -0.08...0.08), dropHeight: 160)
+    }
+
+    private var targetRug: Rug? { menuRug ?? world.activeRug }
+
+    @objc private func addRug() {
+        // A style that is not on the desktop yet, if there is one.
+        let used = Set(world.rugs.map(\.style.id))
+        let style = RugStyle.all.first { !used.contains($0.id) } ?? RugStyle.all.randomElement() ?? RugStyle.all[0]
+        world.add(newRug(style: style, size: world.activeRug?.size ?? .medium, on: screenUnderMouse))
+        saveRugs()
+    }
+
+    @objc private func removeRug() {
+        guard let rug = targetRug, world.rugs.count > 1 else { return }
+        let hidden = world.items(on: rug)
+        if !hidden.isEmpty {
+            NSApp.activate(ignoringOtherApps: true)
+            let alert = NSAlert()
+            alert.messageText = "Remove this rug?"
+            alert.informativeText = hidden.count == 1
+                ? "1 thing is hidden under it. It goes back to where it came from."
+                : "\(hidden.count) things are hidden under it. They go back to where they came from."
+            alert.addButton(withTitle: "Remove Rug")
+            alert.addButton(withTitle: "Cancel")
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+            let errors = stash.pullOutAll(rugID: rug.id)
+            if !errors.isEmpty {
+                refreshItems()
+                showFailures(errors)
+                return
+            }
+        }
+        world.remove(rug)
+        refreshItems()
+        saveRugs()
+    }
+
+    @objc private func chooseStyle(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String, let rug = targetRug else { return }
+        world.setStyle(RugStyle.named(id), of: rug)
+        saveRugs()
+    }
+
+    @objc private func chooseSize(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String, let size = RugSize(rawValue: raw), let rug = targetRug else { return }
+        world.setSize(size, of: rug)
+        saveRugs()
+    }
+
+    @objc private func toggleLift() {
+        guard let rug = targetRug else { return }
+        if rug.sim.isFolded {
+            rug.sim.unfold()
+        } else {
+            rug.sim.fold(side: -1, distance: rug.sim.width * 0.45)
+        }
+        world.wake()
+    }
+
+    @objc private func straighten() {
+        guard let rug = targetRug else { return }
+        rug.sim.moveFrame(to: rug.sim.center, angle: 0)
+        world.wake()
+    }
+
+    @objc private func bringBack() {
+        world.bringAllBack(to: (screenUnderMouse ?? NSScreen.screens[0]).frame)
     }
 
     // MARK: - Stash actions
 
-    private func shove(_ urls: [URL], at position: SIMD2<Float>) {
-        let size = SIMD2(rugView.sim.width, rugView.sim.height)
-        let result = stash.shove(urls, positions: Stash.spiral(count: urls.count, around: position, rugSize: size))
+    private func shove(_ urls: [URL], under rug: Rug, at position: SIMD2<Float>) {
+        let size = SIMD2(rug.sim.width, rug.sim.height)
+        let result = stash.shove(urls, positions: Stash.spiral(count: urls.count, around: position, rugSize: size), rugID: rug.id)
         refreshItems()
         if !result.failures.isEmpty {
             DispatchQueue.main.async { self.showFailures(result.failures.map(\.error)) }
@@ -132,6 +240,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func sweepDesktop() {
+        guard let rug = targetRug else { return }
         let fm = FileManager.default
         let desktop = fm.urls(for: .desktopDirectory, in: .userDomainMask)[0]
         let urls: [URL]
@@ -156,9 +265,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         alert.addButton(withTitle: "Shove Them Under")
         alert.addButton(withTitle: "Cancel")
         guard alert.runModal() == .alertFirstButtonReturn else { return }
-        let result = stash.shove(urls, positions: Stash.scatter(count: urls.count, offset: stash.items.count))
+        let positions = Stash.scatter(count: urls.count, offset: world.items(on: rug).count)
+        let result = stash.shove(urls, positions: positions, rugID: rug.id)
         refreshItems()
-        rugView.rippleEverything()
+        for item in world.items(on: rug) {
+            rug.sim.ripple(atLocal: rug.localPosition(of: item), strength: 1.0, radius: 70)
+        }
+        world.wake()
         if !result.failures.isEmpty { showFailures(result.failures.map(\.error)) }
     }
 
@@ -178,25 +291,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         alert.runModal()
         NSApp.terminate(nil)
     }
-
-    // MARK: - Rug actions
-
-    @objc private func chooseStyle(_ sender: NSMenuItem) {
-        guard let id = sender.representedObject as? String else { return }
-        let style = RugStyle.named(id)
-        Settings.style = style
-        rugView.setStyle(style)
-    }
-
-    @objc private func chooseSize(_ sender: NSMenuItem) {
-        guard let raw = sender.representedObject as? String, let size = RugSize(rawValue: raw) else { return }
-        Settings.size = size
-        rugView.setSize(size)
-    }
-
-    @objc private func toggleLift() { rugView.toggleLift() }
-    @objc private func straighten() { rugView.straighten() }
-    @objc private func bringBack() { rugView.bringBack() }
 
     @objc private func toggleOpenAtLogin() {
         do {
@@ -223,18 +317,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         if stash.pruneMissing() { refreshItems() }
-        populate(menu)
+        populate(menu, for: nil)
     }
 
-    private func populate(_ menu: NSMenu) {
+    /// The menu bar menu (`rug` nil: acts on the rug touched last) or a rug's right-click menu.
+    private func populate(_ menu: NSMenu, for rug: Rug?) {
+        menuRug = rug
         menu.removeAllItems()
-        // First thing in the menu: for when the rug got thrown off the screen.
-        let reset = addItem(menu, "Bring the Rug Back", #selector(bringBack))
+        let multiple = world.rugs.count > 1
+
+        // First thing in the menu: for when a rug got thrown off the screen.
+        let reset = addItem(menu, multiple ? "Bring the Rugs Back" : "Bring the Rug Back", #selector(bringBack))
         reset.keyEquivalent = "r"
         reset.image = NSImage(systemSymbolName: "arrow.uturn.backward.circle", accessibilityDescription: nil)
+        let add = addItem(menu, "Add a Rug", #selector(addRug))
+        add.keyEquivalent = "n"
+        add.image = NSImage(systemSymbolName: "plus.circle", accessibilityDescription: nil)
         menu.addItem(.separator())
+
         let items = stash.items
-        let header = NSMenuItem(title: items.isEmpty ? "Nothing under the rug yet" : "Under the rug (\(items.count))", action: nil, keyEquivalent: "")
+        let header = NSMenuItem(title: items.isEmpty ? "Nothing under the rugs yet" : "Under the rugs (\(items.count))",
+                                action: nil, keyEquivalent: "")
         header.isEnabled = false
         menu.addItem(header)
         for item in items.prefix(25) {
@@ -258,21 +361,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             addItem(menu, "Show the Stash in Finder", #selector(revealStash))
         }
 
+        guard let target = targetRug else { return finish(menu) }
         menu.addItem(.separator())
-        addItem(menu, rugView.isLifted ? "Lay the Rug Flat" : "Lift the Rug", #selector(toggleLift))
-        addItem(menu, "Sweep the Desktop Under the Rug…", #selector(sweepDesktop))
+        let section = NSMenuItem(title: multiple ? "This rug: \(target.style.name)" : target.style.name, action: nil, keyEquivalent: "")
+        section.isEnabled = false
+        section.image = swatches[target.style.id]
+        menu.addItem(section)
+        addItem(menu, target.sim.isFolded ? "Lay It Flat" : "Lift It", #selector(toggleLift))
+        addItem(menu, "Sweep the Desktop Under It…", #selector(sweepDesktop))
 
-        menu.addItem(.separator())
         let styleMenu = NSMenu()
         for style in RugStyle.all {
             let entry = NSMenuItem(title: style.name, action: #selector(chooseStyle(_:)), keyEquivalent: "")
             entry.target = self
             entry.representedObject = style.id
             entry.image = swatches[style.id]
-            entry.state = style.id == rugView.style.id ? .on : .off
+            entry.state = style.id == target.style.id ? .on : .off
             styleMenu.addItem(entry)
         }
-        let styleItem = NSMenuItem(title: "Rug", action: nil, keyEquivalent: "")
+        let styleItem = NSMenuItem(title: "Style", action: nil, keyEquivalent: "")
         styleItem.submenu = styleMenu
         menu.addItem(styleItem)
 
@@ -281,14 +388,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let entry = NSMenuItem(title: size.title, action: #selector(chooseSize(_:)), keyEquivalent: "")
             entry.target = self
             entry.representedObject = size.rawValue
-            entry.state = size == rugView.rugSize ? .on : .off
+            entry.state = size == target.size ? .on : .off
             sizeMenu.addItem(entry)
         }
         let sizeItem = NSMenuItem(title: "Size", action: nil, keyEquivalent: "")
         sizeItem.submenu = sizeMenu
         menu.addItem(sizeItem)
-        addItem(menu, "Straighten the Rug", #selector(straighten))
+        addItem(menu, "Straighten It", #selector(straighten))
+        if multiple {
+            addItem(menu, "Remove This Rug…", #selector(removeRug))
+        }
+        finish(menu)
+    }
 
+    private func finish(_ menu: NSMenu) {
         menu.addItem(.separator())
         let login = addItem(menu, "Open at Login", #selector(toggleOpenAtLogin))
         login.state = SMAppService.mainApp.status == .enabled ? .on : .off

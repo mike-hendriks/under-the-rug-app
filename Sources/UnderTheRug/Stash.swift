@@ -11,6 +11,8 @@ struct StashedItem: Codable, Identifiable, Equatable {
     var x: Float
     var y: Float
     var date: Date
+    /// The rug it lies under. Missing in stashes from before there could be more than one rug.
+    var rugID: UUID?
 }
 
 enum StashError: LocalizedError {
@@ -64,8 +66,18 @@ final class Stash {
         return true
     }
 
-    /// Moves `urls` under the rug, the n-th one at `positions[n]` (or the last position).
-    func shove(_ urls: [URL], positions: [SIMD2<Float>]) -> ShoveResult {
+    /// Gives items without a (known) rug to `rugID`, e.g. after a rug was removed or on upgrade.
+    func adoptOrphans(knownRugs: Set<UUID>, into rugID: UUID) {
+        var changed = false
+        for i in items.indices where items[i].rugID.map({ !knownRugs.contains($0) }) ?? true {
+            items[i].rugID = rugID
+            changed = true
+        }
+        if changed { save() }
+    }
+
+    /// Moves `urls` under the rug `rugID`, the n-th one at `positions[n]` (or the last position).
+    func shove(_ urls: [URL], positions: [SIMD2<Float>], rugID: UUID) -> ShoveResult {
         var result = ShoveResult()
         try? fm.createDirectory(at: stashFolder, withIntermediateDirectories: true)
         let rootPath = root.standardizedFileURL.path
@@ -76,6 +88,7 @@ final class Stash {
             if let existing = items.firstIndex(where: { URL(fileURLWithPath: $0.stashedPath).standardizedFileURL.path == source.path }) {
                 items[existing].x = pos.x
                 items[existing].y = pos.y
+                items[existing].rugID = rugID
                 continue
             }
             if source.path.hasPrefix(rootPath) || rootPath.hasPrefix(source.path + "/") || source.path == "/" {
@@ -89,7 +102,7 @@ final class Stash {
                 try fm.createDirectory(at: folder, withIntermediateDirectories: true)
                 try fm.moveItem(at: source, to: target)
                 let item = StashedItem(id: id, name: fm.displayName(atPath: target.path), originalPath: source.path,
-                                       stashedPath: target.path, x: pos.x, y: pos.y, date: Date())
+                                       stashedPath: target.path, x: pos.x, y: pos.y, date: Date(), rugID: rugID)
                 items.append(item)
                 result.added.append(item)
             } catch {
@@ -101,11 +114,12 @@ final class Stash {
         return result
     }
 
-    func move(_ id: UUID, to position: SIMD2<Float>) {
+    func move(_ id: UUID, to position: SIMD2<Float>, rugID: UUID) {
         guard let i = items.firstIndex(where: { $0.id == id }) else { return }
         let p = Stash.clampToBody(position)
         items[i].x = p.x
         items[i].y = p.y
+        items[i].rugID = rugID
         save()
     }
 
@@ -128,9 +142,10 @@ final class Stash {
         return destination
     }
 
-    func pullOutAll() -> [Error] {
+    /// Puts back everything, or everything under one rug.
+    func pullOutAll(rugID: UUID? = nil) -> [Error] {
         var errors: [Error] = []
-        for item in items {
+        for item in items where rugID == nil || item.rugID == rugID {
             do { try pullOut(item.id) } catch { errors.append(error) }
         }
         return errors

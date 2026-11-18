@@ -73,7 +73,8 @@ enum DevTools {
         }
         let size = SIMD2<Float>(1000, 700)
         let scale = 2
-        renderer.rugTexture = TextureFactory.rugTexture(device: device, queue: renderer.queue, style: RugStyle.named(styleID))
+        let style = RugStyle.named(styleID)
+        guard let texture = TextureFactory.rugTexture(device: device, queue: renderer.queue, style: style) else { return }
 
         let sim = ClothSimulation(width: 570, height: 380, center: size / 2, angle: -0.06, dropHeight: 0)
         let things: [(String, SIMD2<Float>)] = [
@@ -133,7 +134,14 @@ enum DevTools {
                 TextureFactory.iconImage(path: t.0, name: (t.0 as NSString).lastPathComponent)
             }
         }
-        let scene = RugScene(sim: sim, icons: icons, viewSize: size)
+        var scenes = [RugScene(sim: sim, icons: icons, texture: texture)]
+        if ProcessInfo.processInfo.environment["RUG_TWO"] != nil,
+           let second = TextureFactory.rugTexture(device: device, queue: renderer.queue, style: RugStyle.named("bazaar")) {
+            // A smaller second rug overlapping the first, to check stacking and shadows.
+            let other = ClothSimulation(width: 420, height: 280, center: size / 2 + SIMD2(260, -170), angle: 0.25, dropHeight: 0)
+            for _ in 0..<120 { other.update(dt: 1.0 / 60) }
+            scenes.append(RugScene(sim: other, icons: [], texture: second))
+        }
 
         let w = Int(size.x) * scale, h = Int(size.y) * scale
         let colorDesc = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: RugRenderer.colorFormat, width: w, height: h, mipmapped: false)
@@ -159,7 +167,7 @@ enum DevTools {
         pass.stencilAttachment.storeAction = .dontCare
 
         guard let cb = renderer.queue.makeCommandBuffer(), let enc = cb.makeRenderCommandEncoder(descriptor: pass) else { return }
-        renderer.encode(scene, into: enc)
+        renderer.encode(scenes, viewOrigin: .zero, viewSize: size, into: enc)
         enc.endEncoding()
         if let blit = cb.makeBlitCommandEncoder() {
             blit.synchronize(resource: color)
